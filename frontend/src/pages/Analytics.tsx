@@ -7,7 +7,7 @@ import {
   LineChart, Line, Legend,
 } from 'recharts';
 import Layout from '../components/Layout';
-import { apiGetAnalytics } from '../mock/api';
+import apiClient from '../lib/api/client';
 import { buildProjectionPoints, inr } from '../mock/data';
 
 const TABS = ['Overview', 'Projections', 'Triggers'] as const;
@@ -15,14 +15,13 @@ type Tab = typeof TABS[number];
 
 const projData = buildProjectionPoints(4200);
 
-// ── Treemap custom content ──
-function TreeCell(props: { x?: number; y?: number; width?: number; height?: number; name?: string; value?: number; fill?: string; [k: string]: unknown }) {
+function TreeCell(props: { x?: number; y?: number; width?: number; height?: number; name?: string; value?: number; fill?: string;[k: string]: unknown }) {
   const { x = 0, y = 0, width = 0, height = 0, name, value, fill } = props;
-  if (width < 30 || height < 30) return null;
+  if (width < 10 || height < 10) return null;
   return (
     <g>
-      <rect x={x} y={y} width={width - 2} height={height - 2} fill={fill ?? '#333'} fillOpacity={0.85} rx={8} />
-      {width > 60 && height > 40 && (
+      <rect x={x} y={y} width={Math.max(width - 2, 0)} height={Math.max(height - 2, 0)} fill={fill ?? '#333'} fillOpacity={0.85} rx={8} />
+      {width > 40 && height > 30 && (
         <>
           <text x={x + 10} y={y + 22} fill="#F9FDF9" fontSize={12} fontWeight={600} fontFamily="Inter,sans-serif" style={{ pointerEvents: 'none' }}>{name}</text>
           {height > 50 && <text x={x + 10} y={y + 38} fill="rgba(249,253,249,0.6)" fontSize={10} fontFamily="Inter,sans-serif" style={{ pointerEvents: 'none' }}>{inr(value ?? 0)}</text>}
@@ -33,8 +32,8 @@ function TreeCell(props: { x?: number; y?: number; width?: number; height?: numb
 }
 
 // ── TriggerMap grid ──
-const HOURS = [8,10,12,14,16,18,20,22,0];
-const DAYS  = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const HOURS = [8, 10, 12, 14, 16, 18, 20, 22, 0];
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function TriggerMapGrid({ triggers }: { triggers: { hour: number; day: string; riskScore: number }[] }) {
   const getRisk = (h: number, d: string) => triggers.find(t => t.hour === h && t.day === d)?.riskScore ?? 0;
@@ -61,9 +60,24 @@ function TriggerMapGrid({ triggers }: { triggers: { hour: number; day: string; r
   );
 }
 
+async function fetchAnalytics() {
+  const [heatmapRes, streakRes, triggerRes, weeklyRes] = await Promise.all([
+    apiClient.get('/analytics/category-heatmap'),
+    apiClient.get('/analytics/savings-streak'),
+    apiClient.get('/analytics/trigger-map'),
+    apiClient.get('/analytics/weekly-report'),
+  ]);
+  return {
+    categoryHeatmap: heatmapRes.data.data ?? [],
+    savingsStreak: streakRes.data.data ?? { currentStreak: 0, longestStreak: 0, weeklyData: [] },
+    triggerMap: triggerRes.data.data ?? [],
+    weeklySpend: weeklyRes.data.data?.weeklySpend ?? [],
+  };
+}
+
 export default function Analytics() {
   const [tab, setTab] = useState<Tab>('Overview');
-  const { data, isLoading } = useQuery({ queryKey: ['analytics'], queryFn: apiGetAnalytics });
+  const { data, isLoading } = useQuery({ queryKey: ['analytics'], queryFn: fetchAnalytics });
 
   return (
     <Layout>
@@ -94,7 +108,7 @@ export default function Analytics() {
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Category Spend Heatmap</h3>
                 {isLoading ? <div className="skel" style={{ height: 220 }} /> : (
                   <ResponsiveContainer width="100%" height={220}>
-                    <Treemap data={data?.categoryHeatmap.map(d => ({ ...d, size: d.value }))} dataKey="size" content={<TreeCell />}>
+                    <Treemap data={data?.categoryHeatmap ?? []} dataKey="value" content={<TreeCell />}>
                       <Tooltip formatter={(v) => inr(Number(v))} contentStyle={{ background: 'var(--s-high)', border: '1px solid var(--border)', borderRadius: 10, fontSize: '0.8rem' }} />
                     </Treemap>
                   </ResponsiveContainer>
@@ -106,10 +120,10 @@ export default function Analytics() {
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Weekly Spend</h3>
                 {isLoading ? <div className="skel" style={{ height: 180 }} /> : (
                   <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={data?.weeklySpend} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                    <BarChart data={data?.weeklySpend ?? []} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                       <XAxis dataKey="day" tick={{ fill: 'var(--tx-3)', fontSize: 11 }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fill: 'var(--tx-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `₹${(v/1000).toFixed(0)}k`} />
+                      <YAxis tick={{ fill: 'var(--tx-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
                       <Tooltip formatter={(v) => inr(Number(v))} contentStyle={{ background: 'var(--s-high)', border: '1px solid var(--border)', borderRadius: 10 }} />
                       <Bar dataKey="amount" fill="#00FF87" fillOpacity={0.85} radius={[4, 4, 0, 0]} />
                     </BarChart>
@@ -124,16 +138,16 @@ export default function Analytics() {
                   <>
                     <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.25rem' }}>
                       <div>
-                        <p style={{ fontFamily: 'var(--font-head)', fontSize: '2rem', fontWeight: 800, color: 'var(--green)' }}>{data?.savingsStreak.currentStreak}</p>
+                        <p style={{ fontFamily: 'var(--font-head)', fontSize: '2rem', fontWeight: 800, color: 'var(--green)' }}>{data?.savingsStreak?.currentStreak ?? 0}</p>
                         <p style={{ fontSize: '0.75rem', color: 'var(--tx-3)', marginTop: '0.1rem' }}>Current streak</p>
                       </div>
                       <div>
-                        <p style={{ fontFamily: 'var(--font-head)', fontSize: '2rem', fontWeight: 800, color: 'var(--tx-2)' }}>{data?.savingsStreak.longestStreak}</p>
+                        <p style={{ fontFamily: 'var(--font-head)', fontSize: '2rem', fontWeight: 800, color: 'var(--tx-2)' }}>{data?.savingsStreak?.longestStreak ?? 0}</p>
                         <p style={{ fontSize: '0.75rem', color: 'var(--tx-3)', marginTop: '0.1rem' }}>Longest ever</p>
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      {data?.savingsStreak.weeklyData.map((d, i) => (
+                      {data?.savingsStreak?.weeklyData?.map((d: { day: string; underBudget: boolean }, i: number) => (
                         <motion.div key={d.day} initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: i * 0.05, type: 'spring', stiffness: 400 }}
                           style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.375rem' }}>
                           <div style={{ width: 28, height: 28, borderRadius: 6, background: d.underBudget ? 'var(--green-dim)' : 'var(--danger-dim)', border: `1px solid ${d.underBudget ? 'var(--green-border)' : 'rgba(255,107,107,0.25)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem' }}>
@@ -158,7 +172,7 @@ export default function Analytics() {
                 <LineChart data={projData} margin={{ top: 4, right: 20, bottom: 0, left: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                   <XAxis dataKey="year" tick={{ fill: 'var(--tx-3)', fontSize: 11 }} tickFormatter={v => `Yr ${v}`} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: 'var(--tx-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `₹${(v/1000).toFixed(0)}k`} />
+                  <YAxis tick={{ fill: 'var(--tx-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`} />
                   <Tooltip formatter={(v) => inr(Number(v))} labelFormatter={l => `Year ${l}`} contentStyle={{ background: 'var(--s-high)', border: '1px solid var(--border)', borderRadius: 10 }} />
                   <Legend wrapperStyle={{ fontSize: '0.75rem', color: 'var(--tx-2)', paddingTop: '1rem' }} />
                   <Line type="monotone" dataKey="sip" name="SIP @ 12%" stroke="#00FF87" strokeWidth={2.5} dot={false} />

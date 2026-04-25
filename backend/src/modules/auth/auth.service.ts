@@ -84,14 +84,15 @@ async function _issueTokens(user: IUser): Promise<TokenPair> {
   const tokenHash = hashToken(refreshToken);
   const expiresAt = new Date(Date.now() + parseDuration(env.JWT_REFRESH_EXPIRES_IN));
 
-  user.refreshTokens.push({ tokenHash, expiresAt });
+  await UserModel.findByIdAndUpdate(user._id, {
+    $push: {
+      refreshTokens: {
+        $each: [{ tokenHash, expiresAt }],
+        $slice: -10
+      }
+    }
+  });
 
-  // Keep only the 10 most recent tokens
-  if (user.refreshTokens.length > 10) {
-    user.refreshTokens = user.refreshTokens.slice(-10);
-  }
-
-  await user.save();
   return { accessToken, refreshToken };
 }
 
@@ -171,8 +172,9 @@ export async function refresh(incomingRefreshToken: string): Promise<TokenPair> 
   // 4. Reuse detection — if token not found, revoke ALL sessions
   if (matchIdx === -1) {
     logger.warn('Refresh token reuse detected', { userId: payload.userId });
-    user.refreshTokens = [];
-    await user.save();
+    await UserModel.findByIdAndUpdate(user._id, {
+      $set: { refreshTokens: [] }
+    });
     throw new UnauthorizedError(
       'Token reuse detected. All sessions invalidated',
       'REFRESH_TOKEN_INVALID',
@@ -180,7 +182,9 @@ export async function refresh(incomingRefreshToken: string): Promise<TokenPair> 
   }
 
   // 5. Remove used token (rotation)
-  user.refreshTokens.splice(matchIdx, 1);
+  await UserModel.findByIdAndUpdate(user._id, {
+    $pull: { refreshTokens: { tokenHash: incomingHash } }
+  });
 
   // 6. Issue new pair
   const tokens = await _issueTokens(user);
@@ -190,12 +194,10 @@ export async function refresh(incomingRefreshToken: string): Promise<TokenPair> 
 
 export async function logout(userId: string, incomingRefreshToken: string): Promise<void> {
   try {
-    const user = await UserModel.findById(userId);
-    if (!user) return; // fail silently
-
     const incomingHash = hashToken(incomingRefreshToken);
-    user.refreshTokens = user.refreshTokens.filter((t) => t.tokenHash !== incomingHash);
-    await user.save();
+    await UserModel.findByIdAndUpdate(userId, {
+      $pull: { refreshTokens: { tokenHash: incomingHash } }
+    });
   } catch {
     // Logout should never throw
   }

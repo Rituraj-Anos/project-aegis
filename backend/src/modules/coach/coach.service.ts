@@ -5,6 +5,7 @@ import { UserModel } from '../users/user.model.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { withCache, cacheDel, cacheKeys } from '../../utils/cache.js';
+import { emitToUser } from '../../sockets/index.js';
 
 export interface CoachInsight {
   summary:      string;
@@ -68,4 +69,5 @@ export async function updateCoachState(userId: string, coachState: 0 | 1 | 2): P
     { coachState, coachStateUpdatedAt: new Date() },
   );
   await cacheDel(cacheKeys.coachInsight(userId));
+  emitToUser(userId, 'coach:state-changed', { state: coachState });
 }

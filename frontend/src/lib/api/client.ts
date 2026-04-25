@@ -69,8 +69,8 @@ apiClient.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const { data } = await refreshClient.post<{ accessToken: string }>('/auth/refresh');
-      const newToken = data.accessToken;
+      const { data } = await refreshClient.post<{ success: boolean; data: { accessToken: string } }>('/auth/refresh');
+      const newToken = data.data.accessToken;
       tokenStore.setToken(newToken);
       onRefreshed(newToken);
 

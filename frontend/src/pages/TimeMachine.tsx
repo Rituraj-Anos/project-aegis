@@ -3,16 +3,14 @@ import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import Layout from '../components/Layout';
-import { apiGetCounterfactual } from '../mock/api';
+import { apiGetCounterfactual, apiGetAiInsight } from '../features/analytics/api';
 import { inr } from '../mock/data';
 
 // Count-up hook
 function useCountUp(target: number, dur = 2000, delay = 400) {
   const [val, setVal] = useState(0);
-  const started = useRef(false);
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
+    let animationFrameId: number;
     const t = setTimeout(() => {
       const start = Date.now();
       const tick = () => {
@@ -21,11 +19,16 @@ function useCountUp(target: number, dur = 2000, delay = 400) {
         // ease-out-cubic
         const eased = 1 - Math.pow(1 - pct, 3);
         setVal(Math.round(eased * target));
-        if (pct < 1) requestAnimationFrame(tick);
+        if (pct < 1) {
+          animationFrameId = requestAnimationFrame(tick);
+        }
       };
-      requestAnimationFrame(tick);
+      animationFrameId = requestAnimationFrame(tick);
     }, delay);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    };
   }, [target, dur, delay]);
   return val;
 }
@@ -53,6 +56,18 @@ export default function TimeMachine() {
   const { data } = useQuery({ queryKey: ['counterfactual'], queryFn: apiGetCounterfactual });
   const saved15y = useCountUp(data?.savedIn15Years ?? 284600, 2200, 600);
   const savedToday = useCountUp(data?.savedToday ?? 23450, 1800, 800);
+
+  const { data: insightData, isLoading: insightLoading } = useQuery({
+    queryKey: ['ai-insight', data?.savedToday, data?.savedIn15Years],
+    queryFn: () => apiGetAiInsight({
+      type: 'sip_insight',
+      totalSpend: data?.savedToday ?? 23450,
+      sipProjection5y: Math.round((data?.savedToday ?? 23450) * Math.pow(1.12, 5)),
+      sipProjection10y: Math.round((data?.savedToday ?? 23450) * Math.pow(1.12, 10)),
+      sipProjection15y: data?.savedIn15Years ?? 284600,
+    }),
+    enabled: !!data,
+  });
 
   return (
     <Layout>
@@ -99,6 +114,25 @@ export default function TimeMachine() {
                 </motion.div>
               ))}
             </div>
+          </motion.div>
+
+          {/* AI Insight */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }} className="card" style={{ padding: '1.5rem', marginBottom: '1.75rem', background: 'var(--s-low)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <span style={{ fontSize: '1.25rem' }}>✨</span>
+              <h2 style={{ fontSize: '1rem', fontWeight: 600 }}>AI Coach Insight</h2>
+            </div>
+            {insightLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div className="skel" style={{ height: 16, width: '100%' }} />
+                <div className="skel" style={{ height: 16, width: '90%' }} />
+                <div className="skel" style={{ height: 16, width: '70%' }} />
+              </div>
+            ) : (
+              <p style={{ fontSize: '0.9rem', color: 'var(--tx-2)', lineHeight: 1.6 }}>
+                {insightData?.insight}
+              </p>
+            )}
           </motion.div>
 
           {/* CompoundingDelta Chart */}

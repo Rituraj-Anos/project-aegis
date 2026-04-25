@@ -1,14 +1,16 @@
 import type { Request, Response, NextFunction } from 'express';
 import redis from '../config/redis.js';
 
+const localStore = new Map<string, number>();
+
 export async function bruteForceGuard(req: Request, res: Response, next: NextFunction): Promise<void> {
   const email = (req.body as any)?.email?.toLowerCase();
   if (!email) { next(); return; }
 
   const key = `bf:${email}`;
-  const attempts = await redis.get(key);
+  const attempts = localStore.get(key) || 0;
 
-  if (attempts && parseInt(attempts, 10) >= 10) {
+  if (attempts >= 10) {
     res.status(429).json({
       success: false,
       error: { message: 'Account temporarily locked due to too many failed attempts.', code: 'BRUTE_FORCE_LOCKED' },
@@ -20,9 +22,10 @@ export async function bruteForceGuard(req: Request, res: Response, next: NextFun
 
 export async function recordFailedLogin(email: string): Promise<void> {
   const key = `bf:${email.toLowerCase()}`;
-  await redis.multi().incr(key).expire(key, 30 * 60).exec();
+  const current = localStore.get(key) || 0;
+  localStore.set(key, current + 1);
 }
 
 export async function clearFailedLogins(email: string): Promise<void> {
-  await redis.del(`bf:${email.toLowerCase()}`);
+  localStore.delete(`bf:${email.toLowerCase()}`);
 }

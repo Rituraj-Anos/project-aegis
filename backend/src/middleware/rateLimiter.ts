@@ -20,7 +20,6 @@ const rateLimitHandler = (_req: Request, res: Response) => {
 export const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 300,
-  store: makeRedisStore('global'),
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   handler: rateLimitHandler,
@@ -28,8 +27,7 @@ export const globalLimiter = rateLimit({
 
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
-  store: makeRedisStore('auth'),
+  limit: 100,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   skipSuccessfulRequests: true,
@@ -39,7 +37,6 @@ export const authLimiter = rateLimit({
 export const coachLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   limit: 20,
-  store: makeRedisStore('coach'),
   keyGenerator: (req) => (req as any).user?._id?.toString() ?? req.ip ?? 'unknown',
   standardHeaders: 'draft-7',
   legacyHeaders: false,
@@ -48,8 +45,7 @@ export const coachLimiter = rateLimit({
 
 export const reportLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  limit: 10,
-  store: makeRedisStore('report'),
+  limit: 100,
   keyGenerator: (req) => (req as any).user?._id?.toString() ?? req.ip ?? 'unknown',
   standardHeaders: 'draft-7',
   legacyHeaders: false,
@@ -59,7 +55,6 @@ export const reportLimiter = rateLimit({
 export const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   limit: 30,
-  store: makeRedisStore('upload'),
   keyGenerator: (req) => (req as any).user?._id?.toString() ?? req.ip ?? 'unknown',
   standardHeaders: 'draft-7',
   legacyHeaders: false,

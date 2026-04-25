@@ -21,3 +21,33 @@ export async function getSavingsRate(req: Request, res: Response): Promise<void>
   const result = await analyticsService.getSavingsRate(req.user!._id.toString(), req.query as unknown as AnalyticsQuery);
   res.json({ success: true, data: result });
 }
+
+export async function getCategoryHeatmap(req: Request, res: Response): Promise<void> {
+  const result = await analyticsService.getCategoryHeatmap(req.user!._id.toString());
+  res.json({ success: true, data: result });
+}
+
+export async function getSavingsStreak(req: Request, res: Response): Promise<void> {
+  const result = await analyticsService.getSavingsStreak(req.user!._id.toString());
+  res.json({ success: true, data: result });
+}
+
+export async function getTriggerMap(req: Request, res: Response): Promise<void> {
+  const result = await analyticsService.getTriggerMap(req.user!._id.toString());
+  res.json({ success: true, data: result });
+}
+
+export async function getWeeklyReport(req: Request, res: Response): Promise<void> {
+  const result = await analyticsService.getWeeklyReport(req.user!._id.toString());
+  res.json({ success: true, data: result });
+}
+
+export async function getCounterfactual(req: Request, res: Response): Promise<void> {
+  const result = await analyticsService.getCounterfactual(req.user!._id.toString());
+  res.json({ success: true, data: result });
+}
+
+export async function getAiInsight(req: Request, res: Response): Promise<void> {
+  const result = await analyticsService.generateAiInsight(req.user!._id.toString(), req.body);
+  res.json({ success: true, data: result });
+}

@@ -6,7 +6,8 @@ import { motion } from 'framer-motion';
 import { useNavigate, Link } from 'react-router-dom';
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { apiLogin } from '../mock/api';
+import apiClient from '../lib/api/client';
+import { useAuth } from '../auth/AuthProvider';
 
 const schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -24,15 +25,22 @@ const ORBS = [
 
 export default function Login() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [showPw, setShowPw] = useState(false);
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
     resolver: zodResolver(schema),
   });
 
   const onSubmit = async (d: Form) => {
-    await apiLogin(d.email, d.password);
-    toast.success('Welcome back, Rituraj 👋');
-    navigate('/dashboard');
+    try {
+      const res = await apiClient.post('/auth/login', { email: d.email, password: d.password });
+      login(res.data.data.accessToken, res.data.data.user);
+      toast.success('Welcome back 👋');
+      navigate('/dashboard');
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message ?? 'Invalid credentials';
+      toast.error(msg);
+    }
   };
 
   return (

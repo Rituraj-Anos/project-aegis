@@ -5,6 +5,7 @@ import { connectDB, disconnectDB } from './config/db.js';
 import { logger } from './utils/logger.js';
 import { startAlertJobs } from './modules/notifications/alert.job.js';
 import { connectRedis, disconnectRedis } from './config/redis.js';
+import { initializeSockets } from './sockets/index.js';
 
 async function bootstrap(): Promise<void> {
   // 1. Connect to database
@@ -17,7 +18,7 @@ async function bootstrap(): Promise<void> {
   const server = http.createServer(app);
 
   // 3. Socket.io setup will be added in Phase 5
-  // initializeSockets(server);
+  initializeSockets(server);
 
   // 4. Cron jobs
   startAlertJobs();
@@ -50,6 +51,6 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((err) => {
-  logger.error('Fatal bootstrap error', { error: err });
+  logger.error('Fatal bootstrap error', { error: (err as Error).message || err, stack: (err as Error).stack });
   process.exit(1);
 });

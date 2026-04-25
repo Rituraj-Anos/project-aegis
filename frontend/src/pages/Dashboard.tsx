@@ -5,7 +5,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { Link } from 'react-router-dom';
 import { AreaChart, Area, ResponsiveContainer, Tooltip } from 'recharts';
 import Layout from '../components/Layout';
-import { apiGetDashboardStats } from '../mock/api';
+import apiClient from '../lib/api/client';
 import { COACH_CONFIG, CATEGORY_EMOJI, inr, buildProjectionPoints } from '../mock/data';
 
 const projPoints = buildProjectionPoints(4200);
@@ -15,13 +15,42 @@ const cardVariants = {
   show: (i: number) => ({ opacity: 1, y: 0, transition: { delay: i * 0.08, type: 'spring' as const, stiffness: 280, damping: 26 } }),
 };
 
+async function fetchDashboardStats() {
+  const [userRes, txRes, alertRes, budgetRes] = await Promise.all([
+    apiClient.get('/users/me'),
+    apiClient.get('/transactions', { params: { limit: 5, sortBy: 'date', sortOrder: 'desc' } }),
+    apiClient.get('/alerts', { params: { acknowledged: false, limit: 5 } }),
+    apiClient.get('/budgets'),
+  ]);
+
+  const user = userRes.data.data;
+  const transactions = Array.isArray(txRes.data.data?.data) ? txRes.data.data.data : Array.isArray(txRes.data.data) ? txRes.data.data : [];
+  const alerts = Array.isArray(alertRes.data.data) ? alertRes.data.data : [];
+
+  const budget = budgetRes.data.data;
+
+  const totalSpentThisMonth = transactions.reduce((s: number, t: { amount: number }) => s + t.amount, 0);
+  const budgetTotal = budget?.globalThreshold ?? 30000;
+  const budgetRemaining = Math.max(0, budgetTotal - totalSpentThisMonth);
+
+  return {
+    coachState: user?.coachState ?? 0,
+    totalSpentThisMonth,
+    budgetTotal,
+    budgetRemaining,
+    savingsStreak: 0, // comes from /analytics/savings-streak if needed
+    recentTransactions: transactions,
+    activeAlerts: alerts,
+  };
+}
+
 export default function Dashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard-stats'],
-    queryFn: apiGetDashboardStats,
+    queryFn: fetchDashboardStats,
   });
 
-  const coach = COACH_CONFIG[data?.coachState ?? 1];
+  const coach = COACH_CONFIG[data?.coachState ?? 0];
   const pct = data ? Math.round((data.totalSpentThisMonth / data.budgetTotal) * 100) : 0;
 
   return (
@@ -38,10 +67,10 @@ export default function Dashboard() {
         {/* Stat Cards */}
         <div className="grid-4" style={{ marginBottom: '1.75rem' }}>
           {[
-            { icon: TrendingUp, label: 'Total Spent', value: inr(data?.totalSpentThisMonth ?? 23850), sub: 'This month', color: 'var(--tx-1)' },
-            { icon: Wallet,     label: 'Budget Remaining', value: inr(data?.budgetRemaining ?? 6150), sub: `of ${inr(data?.budgetTotal ?? 30000)}`, color: '#00FF87' },
-            { icon: Flame,      label: 'Savings Streak', value: `${data?.savingsStreak ?? 3} days`, sub: 'Under budget', color: '#FFD16F' },
-            { icon: Shield,     label: 'Coach State', value: coach.label, sub: 'Auto-adjusted', color: coach.color },
+            { icon: TrendingUp, label: 'Total Spent', value: inr(data?.totalSpentThisMonth ?? 0), sub: 'This month', color: 'var(--tx-1)' },
+            { icon: Wallet, label: 'Budget Remaining', value: inr(data?.budgetRemaining ?? 0), sub: `of ${inr(data?.budgetTotal ?? 30000)}`, color: '#00FF87' },
+            { icon: Flame, label: 'Savings Streak', value: `${data?.savingsStreak ?? 0} days`, sub: 'Under budget', color: '#FFD16F' },
+            { icon: Shield, label: 'Coach State', value: coach.label, sub: 'Auto-adjusted', color: coach.color },
           ].map(({ icon: Icon, label, value, sub, color }, i) => (
             <motion.div key={label} className="card" custom={i} variants={cardVariants} initial="hidden" animate="show"
               whileHover={{ scale: 1.025, boxShadow: `0 0 24px ${color}18` }}
@@ -84,23 +113,23 @@ export default function Dashboard() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
               {isLoading
-                ? [1,2,3].map(i => <div key={i} className="skel" style={{ height: 48, borderRadius: 10 }} />)
-                : (data?.recentTransactions ?? []).map((t, i) => (
-                    <motion.div key={t._id} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.45 + i * 0.06 }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', padding: '0.75rem', background: 'var(--s-high)', borderRadius: 10 }}>
-                      <div style={{ width: 38, height: 38, borderRadius: 10, background: 'var(--s-bright)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 }}>
-                        {CATEGORY_EMOJI[t.category] ?? '💳'}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontSize: '0.875rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.merchantName}</p>
-                        <p style={{ fontSize: '0.75rem', color: 'var(--tx-3)', marginTop: '0.1rem' }}>{formatDistanceToNow(new Date(t.timestamp), { addSuffix: true })}</p>
-                      </div>
-                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <p style={{ fontSize: '0.9375rem', fontWeight: 700, color: t.isIntercepted ? 'var(--danger)' : 'var(--tx-1)' }}>{inr(t.amount)}</p>
-                        {t.isIntercepted && <span className="badge badge-danger" style={{ fontSize: '0.6rem', marginTop: '0.2rem' }}>Intercepted</span>}
-                      </div>
-                    </motion.div>
-                  ))}
+                ? [1, 2, 3].map(i => <div key={i} className="skel" style={{ height: 48, borderRadius: 10 }} />)
+                : (data?.recentTransactions ?? []).map((t: any, i: number) => (
+                  <motion.div key={t._id} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.45 + i * 0.06 }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', padding: '0.75rem', background: 'var(--s-high)', borderRadius: 10 }}>
+                    <div style={{ width: 38, height: 38, borderRadius: 10, background: 'var(--s-bright)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 }}>
+                      {CATEGORY_EMOJI[t.category] ?? '💳'}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: '0.875rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.merchantName || t.description || 'Unknown'}</p>
+                      <p style={{ fontSize: '0.75rem', color: 'var(--tx-3)', marginTop: '0.1rem' }}>{formatDistanceToNow(new Date(t.timestamp || t.date || Date.now()), { addSuffix: true })}</p>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <p style={{ fontSize: '0.9375rem', fontWeight: 700, color: t.isIntercepted ? 'var(--danger)' : 'var(--tx-1)' }}>{inr(t.amount)}</p>
+                      {t.isIntercepted && <span className="badge badge-danger" style={{ fontSize: '0.6rem', marginTop: '0.2rem' }}>Intercepted</span>}
+                    </div>
+                  </motion.div>
+                ))}
             </div>
           </motion.div>
 
@@ -108,20 +137,20 @@ export default function Dashboard() {
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }} className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.25rem' }}>Active Alerts</h2>
             {isLoading
-              ? [1,2].map(i => <div key={i} className="skel" style={{ height: 80, borderRadius: 12 }} />)
-              : (data?.activeAlerts ?? []).map((alert, i) => {
-                  const cfg = COACH_CONFIG[alert.coachState];
-                  return (
-                    <motion.div key={alert._id} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 + i * 0.08 }}
-                      style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, borderRadius: 12, padding: '1rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                        <span className="badge" style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}` }}>{cfg.label}</span>
-                      </div>
-                      <p style={{ fontSize: '0.8125rem', color: 'var(--tx-2)', lineHeight: 1.5, marginBottom: '0.5rem' }}>{alert.message}</p>
-                      <p style={{ fontSize: '0.75rem', color: cfg.color, fontWeight: 600 }}>🌱 {alert.shadowInsight}</p>
-                    </motion.div>
-                  );
-                })}
+              ? [1, 2].map(i => <div key={i} className="skel" style={{ height: 80, borderRadius: 12 }} />)
+              : (data?.activeAlerts ?? []).map((alert: { _id: string; coachState: 0 | 1 | 2; message: string; shadowInsight: string }, i: number) => {
+                const cfg = COACH_CONFIG[alert.coachState];
+                return (
+                  <motion.div key={alert._id} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 + i * 0.08 }}
+                    style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, borderRadius: 12, padding: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <span className="badge" style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}` }}>{cfg.label}</span>
+                    </div>
+                    <p style={{ fontSize: '0.8125rem', color: 'var(--tx-2)', lineHeight: 1.5, marginBottom: '0.5rem' }}>{alert.message}</p>
+                    <p style={{ fontSize: '0.75rem', color: cfg.color, fontWeight: 600 }}>🌱 {alert.shadowInsight}</p>
+                  </motion.div>
+                );
+              })}
           </motion.div>
         </div>
 

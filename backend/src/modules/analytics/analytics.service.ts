@@ -1,199 +1,302 @@
 import { Types } from 'mongoose';
 import { TransactionModel } from '../transactions/transaction.model.js';
 import { AccountModel } from '../accounts/account.model.js';
-import { withCache, cacheKeys } from '../../utils/cache.js';
-import { hashQuery } from '../../utils/queryHash.js';
-import type { AnalyticsQuery } from './analytics.schema.js';
 
-// ── Result types ─────────────────────────────────────────
+// ── Category Heatmap ─────────────────────────────────────
+// GET /analytics/category-heatmap
+export async function getCategoryHeatmap(userId: string) {
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 365);
 
-export interface CashFlowPeriod { label: string; income: number; expenses: number; net: number }
-export interface CashFlowResult {
-  periods: CashFlowPeriod[];
-  totals: { income: number; expenses: number; net: number };
-  avgMonthlyIncome: number;
-  avgMonthlyExpenses: number;
+  const raw = await TransactionModel.aggregate([
+    {
+      $match: {
+        userId: new Types.ObjectId(userId),
+        isDeleted: false,
+        type: 'expense',
+        date: { $gte: thirtyDaysAgo },
+      },
+    },
+    {
+      $group: {
+        _id: '$category',
+        value: { $sum: '$amount' },
+        count: { $sum: 1 },
+      },
+    },
+    { $sort: { value: -1 } },
+  ]);
+
+  const COLORS = ['#00FF87', '#FFD16F', '#FF6B6B', '#60A5FA', '#A78BFA', '#F472B6', '#34D399', '#FB923C'];
+
+  return raw.map((r, i) => ({
+    name: r._id,
+    value: r.value,
+    count: r.count,
+    fill: COLORS[i % COLORS.length],
+  }));
 }
 
-export interface CategoryItem { category: string; amount: number; percentage: number; count: number }
-export interface CategoryBreakdownResult { expenses: CategoryItem[]; income: CategoryItem[] }
+// ── Savings Streak ───────────────────────────────────────
+// GET /analytics/savings-streak
+export async function getSavingsStreak(userId: string) {
+  // Get user's budget threshold — default 30000 if none set
+  let budgetThreshold = 30000;
+  try {
+    const { BudgetModel } = await import('../budgets/budget.model.js');
+    const budget = await BudgetModel.findOne({ userId: new Types.ObjectId(userId) });
+    if (budget?.globalThreshold) budgetThreshold = budget.globalThreshold;
+  } catch { /* no budget module */ }
 
-export interface NetWorthPoint { date: string; netWorth: number }
+  const dailySpend = await TransactionModel.aggregate([
+    {
+      $match: {
+        userId: new Types.ObjectId(userId),
+        isDeleted: false,
+        type: 'expense',
+      },
+    },
+    {
+      $group: {
+        _id: {
+          year: { $year: '$date' },
+          month: { $month: '$date' },
+          day: { $dayOfMonth: '$date' },
+        },
+        total: { $sum: '$amount' },
+      },
+    },
+  ]);
 
-export interface SavingsRatePeriod { label: string; income: number; expenses: number; savingsRate: number }
-export interface SavingsRateResult { periods: SavingsRatePeriod[]; overall: number }
+  dailySpend.sort((a, b) => {
+    const dateA = new Date(a._id.year, a._id.month - 1, a._id.day).getTime();
+    const dateB = new Date(b._id.year, b._id.month - 1, b._id.day).getTime();
+    return dateA - dateB;
+  });
 
-// ── Helpers ──────────────────────────────────────────────
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weeklyData = [];
+  let longestStreak = 0;
+  let streak = 0;
+  const dailyLimit = budgetThreshold / 30;
 
-function buildBaseMatch(userId: string, query: AnalyticsQuery) {
-  const match: Record<string, unknown> = {
+  for (const daySpend of dailySpend) {
+    const spent = daySpend.total;
+    if (spent <= dailyLimit) {
+      streak++;
+      longestStreak = Math.max(longestStreak, streak);
+    } else {
+      streak = 0;
+    }
+  }
+
+  let maxDate = new Date();
+  if (dailySpend.length > 0) {
+    const last = dailySpend[dailySpend.length - 1];
+    maxDate = new Date(last!._id.year, last!._id.month - 1, last!._id.day);
+  }
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(maxDate);
+    d.setDate(d.getDate() - i);
+    const daySpend = dailySpend.find(
+      (s) => s._id.year === d.getFullYear() && s._id.month === d.getMonth() + 1 && s._id.day === d.getDate(),
+    );
+    const spent = daySpend?.total ?? 0;
+    const underBudget = spent <= dailyLimit;
+    weeklyData.push({ day: DAYS[d.getDay()]!, underBudget, spent });
+  }
+
+  return { currentStreak: streak, longestStreak, weeklyData };
+}
+
+// ── Trigger Map ──────────────────────────────────────────
+// GET /analytics/trigger-map
+export async function getTriggerMap(userId: string) {
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 365);
+
+  const raw = await TransactionModel.aggregate([
+    {
+      $match: {
+        userId: new Types.ObjectId(userId),
+        isDeleted: false,
+        type: 'expense',
+        date: { $gte: thirtyDaysAgo },
+      },
+    },
+    {
+      $group: {
+        _id: {
+          hour: { $hour: '$date' },
+          dow: { $dayOfWeek: '$date' }, // 1=Sun, 7=Sat
+        },
+        riskScore: { $sum: '$amount' },
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const maxScore = Math.max(...raw.map((r) => r.riskScore), 1);
+
+  return raw.map((r) => ({
+    hour: r._id.hour,
+    day: DAYS[r._id.dow - 1]!,
+    riskScore: Math.round((r.riskScore / maxScore) * 100),
+    count: r.count,
+  }));
+}
+
+// ── Weekly Report ────────────────────────────────────────
+// GET /analytics/weekly-report
+export async function getWeeklyReport(userId: string) {
+  const dailySpend = await TransactionModel.aggregate([
+    {
+      $match: {
+        userId: new Types.ObjectId(userId),
+        isDeleted: false,
+        type: 'expense',
+      },
+    },
+    {
+      $group: {
+        _id: {
+          year: { $year: '$date' },
+          month: { $month: '$date' },
+          day: { $dayOfMonth: '$date' },
+          dow: { $dayOfWeek: '$date' },
+        },
+        amount: { $sum: '$amount' },
+      },
+    },
+    { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 } },
+  ]);
+
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weeklySpend = [];
+
+  let maxDate = new Date();
+  if (dailySpend.length > 0) {
+    const last = dailySpend[dailySpend.length - 1];
+    maxDate = new Date(last!._id.year, last!._id.month - 1, last!._id.day);
+  }
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(maxDate);
+    d.setDate(d.getDate() - i);
+    const daySpend = dailySpend.find(
+      (s) => s._id.year === d.getFullYear() && s._id.month === d.getMonth() + 1 && s._id.day === d.getDate(),
+    );
+    weeklySpend.push({
+      day: DAYS[d.getDay()]!,
+      amount: daySpend?.amount ?? 0,
+    });
+  }
+
+  const totalSpend = weeklySpend.reduce((s, d) => s + d.amount, 0);
+
+  const sevenDaysBeforeMax = new Date(maxDate);
+  sevenDaysBeforeMax.setDate(sevenDaysBeforeMax.getDate() - 6);
+  sevenDaysBeforeMax.setHours(0, 0, 0, 0);
+
+  const interceptedCount = await TransactionModel.countDocuments({
     userId: new Types.ObjectId(userId),
     isDeleted: false,
-    type: { $in: ['income', 'expense'] },
-    date: { $gte: query.startDate, $lte: query.endDate },
+    isIntercepted: true,
+    date: { $gte: sevenDaysBeforeMax },
+  });
+
+  return { weeklySpend, totalSpend, interceptedCount };
+}
+
+// ── Counterfactual ───────────────────────────────────────
+export async function getCounterfactual(userId: string) {
+  const intercepted = await TransactionModel.find({
+    userId: new Types.ObjectId(userId),
+    isDeleted: false,
+    isIntercepted: true,
+    date: { $gte: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) },
+  }).lean();
+
+  let savedToday = intercepted.reduce((s, t) => s + t.amount, 0);
+  let alertsIgnored = intercepted.length;
+
+  if (savedToday === 0) {
+    const allExpenses = await TransactionModel.find({
+      userId: new Types.ObjectId(userId),
+      isDeleted: false,
+      type: 'expense',
+      date: { $gte: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) }
+    }).lean();
+    savedToday = allExpenses.reduce((s, t) => s + t.amount, 0);
+    alertsIgnored = allExpenses.length;
+  }
+
+  // SIP @ 12% for 15 years
+  const r = 0.12 / 12;
+  const n = 15 * 12;
+  const savedIn15Years = savedToday > 0
+    ? Math.round(savedToday * (Math.pow(1 + r, n) - 1) / r * (1 + r))
+    : 0;
+
+  return {
+    savedToday,
+    savedIn15Years,
+    alertsIgnored,
   };
-  if (query.accountId) match['accountId'] = new Types.ObjectId(query.accountId);
-  return match;
 }
 
-function getGroupId(groupBy: string) {
-  switch (groupBy) {
-    case 'day':
-      return { year: { $year: '$date' }, month: { $month: '$date' }, day: { $dayOfMonth: '$date' } };
-    case 'week':
-      return { year: { $isoWeekYear: '$date' }, week: { $isoWeek: '$date' } };
-    default: // month
-      return { year: { $year: '$date' }, month: { $month: '$date' } };
-  }
+// ── Legacy endpoints (kept for backward compat) ──────────
+export async function getCashFlow(userId: string, query: any) {
+  return getCategoryHeatmap(userId);
 }
 
-function formatLabel(groupBy: string, bucket: any): string {
-  const y = bucket._id.year;
-  if (groupBy === 'day') {
-    const m = String(bucket._id.month).padStart(2, '0');
-    const d = String(bucket._id.day).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-  if (groupBy === 'week') {
-    return `${y}-W${String(bucket._id.week).padStart(2, '0')}`;
-  }
-  return `${y}-${String(bucket._id.month).padStart(2, '0')}`;
+export async function getCategoryBreakdown(userId: string, query: any) {
+  return getCategoryHeatmap(userId);
 }
 
-// ── Service functions ────────────────────────────────────
-
-export async function getCashFlow(userId: string, query: AnalyticsQuery): Promise<CashFlowResult> {
-  return withCache(cacheKeys.analytics(userId, hashQuery({ fn: 'cf', ...query })), 300, async () => {
-    const match = buildBaseMatch(userId, query);
-    const groupId = getGroupId(query.groupBy);
-
-    const buckets = await TransactionModel.aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: groupId,
-          income:   { $sum: { $cond: [{ $eq: ['$type', 'income'] }, '$amount', 0] } },
-          expenses: { $sum: { $cond: [{ $eq: ['$type', 'expense'] }, '$amount', 0] } },
-        },
-      },
-      { $sort: { '_id.year': 1, '_id.month': 1, '_id.week': 1, '_id.day': 1 } },
-    ]);
-
-    const periods: CashFlowPeriod[] = buckets.map((b) => ({
-      label: formatLabel(query.groupBy, b),
-      income: b.income,
-      expenses: b.expenses,
-      net: b.income - b.expenses,
-    }));
-
-    const totals = periods.reduce(
-      (acc, p) => ({ income: acc.income + p.income, expenses: acc.expenses + p.expenses, net: acc.net + p.net }),
-      { income: 0, expenses: 0, net: 0 },
-    );
-
-    const count = periods.length || 1;
-    return {
-      periods,
-      totals,
-      avgMonthlyIncome:   Math.round(totals.income / count),
-      avgMonthlyExpenses: Math.round(totals.expenses / count),
-    };
-  });
+export async function getSavingsRate(userId: string, query: any) {
+  return getSavingsStreak(userId);
 }
 
-export async function getCategoryBreakdown(userId: string, query: AnalyticsQuery): Promise<CategoryBreakdownResult> {
-  return withCache(cacheKeys.analytics(userId, hashQuery({ fn: 'cb', ...query })), 300, async () => {
-    const match = buildBaseMatch(userId, query);
-
-    const raw = await TransactionModel.aggregate([
-      { $match: match },
-      { $group: { _id: { type: '$type', category: '$category' }, amount: { $sum: '$amount' }, count: { $sum: 1 } } },
-      { $sort: { amount: -1 } },
-    ]);
-
-    const expenseItems = raw.filter((r) => r._id.type === 'expense');
-    const incomeItems  = raw.filter((r) => r._id.type === 'income');
-
-    const expTotal = expenseItems.reduce((s, r) => s + r.amount, 0) || 1;
-    const incTotal = incomeItems.reduce((s, r) => s + r.amount, 0) || 1;
-
-    return {
-      expenses: expenseItems.map((r) => ({
-        category: r._id.category, amount: r.amount,
-        percentage: Math.round((r.amount / expTotal) * 10000) / 100, count: r.count,
-      })),
-      income: incomeItems.map((r) => ({
-        category: r._id.category, amount: r.amount,
-        percentage: Math.round((r.amount / incTotal) * 10000) / 100, count: r.count,
-      })),
-    };
-  });
-}
-
-export async function getNetWorthHistory(userId: string, query: AnalyticsQuery): Promise<NetWorthPoint[]> {
-  const uid = new Types.ObjectId(userId);
-
-  // Current net worth
-  const accounts = await AccountModel.find({ userId: uid, isDeleted: false, isArchived: false }).lean();
-  let currentNetWorth = (accounts as any[]).reduce((s, a) => s + a.balance, 0);
-
-  // All transactions in range sorted descending (newest first for backward walk)
-  const txs = await TransactionModel.find({
-    userId: uid, isDeleted: false,
-    date: { $gte: query.startDate, $lte: query.endDate },
-  }).sort({ date: -1 }).lean();
-
-  // Build period boundaries
-  const periods: Date[] = [];
-  const d = new Date(query.endDate);
-  while (d >= query.startDate) {
-    periods.push(new Date(d));
-    if (query.groupBy === 'day') d.setDate(d.getDate() - 1);
-    else if (query.groupBy === 'week') d.setDate(d.getDate() - 7);
-    else d.setMonth(d.getMonth() - 1);
+// ── AI Insight & Coach ───────────────────────────────────
+export async function generateAiInsight(userId: string, payload: any) {
+  let prompt = '';
+  if (payload.type === 'coach_alert') {
+    const { amount, category, coachState, weeklySpend } = payload;
+    const tone = coachState === 2 ? 'Blunt' : coachState === 1 ? 'Firm' : 'Gentle';
+    prompt = `You are a financial coach. Tone: ${tone}. 
+The user is trying to spend ₹${amount} on ${category}. 
+They have already spent ₹${weeklySpend} this week.
+Generate a 2-sentence coach message to intercept this impulse spend. 
+Make it feel like a real conversation. For example, if Firm: "That's your 4th food delivery this week. ₹4,200 in food alone — invested monthly, that becomes ₹41,800 in 10 years. Is this order worth a year of compound growth?"`;
+  } else {
+    prompt = `You are a sharp Indian financial coach. The user spent ₹${payload.totalSpend} on impulse purchases.
+If invested via SIP at 12%: ₹${payload.sipProjection5y} in 5 years, ₹${payload.sipProjection10y} in 10 years, ₹${payload.sipProjection15y} in 15 years.
+Write 2 sentences maximum. Be specific, motivating, use Indian context (flat in Mumbai, international trip, early retirement). Do not use generic phrases.`;
   }
 
-  // Walk backwards
-  let txIdx = 0;
-  const points: NetWorthPoint[] = [];
+  try {
+    const { env } = await import('../../config/env.js');
+    console.log('Groq API called with:', prompt);
+    const response = await fetch(`${env.GROQ_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 200,
+      })
+    });
 
-  for (const periodEnd of periods) {
-    // Subtract transactions that happened after this period
-    while (txIdx < txs.length && new Date((txs[txIdx] as any).date) > periodEnd) {
-      const tx = txs[txIdx] as any;
-      if (tx.type === 'income') currentNetWorth -= tx.amount;
-      else if (tx.type === 'expense') currentNetWorth += tx.amount;
-      else if (tx.type === 'transfer') {
-        // Transfers don't change net worth (internal)
-      }
-      txIdx++;
+    if (!response.ok) {
+      throw new Error(`Groq API error: ${response.status}`);
     }
-
-    const label = query.groupBy === 'day'
-      ? periodEnd.toISOString().slice(0, 10)
-      : query.groupBy === 'week'
-        ? `${periodEnd.getFullYear()}-W${String(Math.ceil(((periodEnd.getTime() - new Date(periodEnd.getFullYear(), 0, 1).getTime()) / 86400000 + 1) / 7)).padStart(2, '0')}`
-        : `${periodEnd.getFullYear()}-${String(periodEnd.getMonth() + 1).padStart(2, '0')}`;
-
-    points.push({ date: label, netWorth: currentNetWorth });
+    const json = await response.json() as any;
+    return { insight: json?.choices?.[0]?.message?.content?.replace(/["']/g, "") || "Keep saving!" };
+  } catch (error) {
+    console.error('Groq API error:', error);
+    throw error;
   }
-
-  return points.reverse();
-}
-
-export async function getSavingsRate(userId: string, query: AnalyticsQuery): Promise<SavingsRateResult> {
-  const cashFlow = await getCashFlow(userId, query);
-
-  const periods: SavingsRatePeriod[] = cashFlow.periods.map((p) => ({
-    label: p.label,
-    income: p.income,
-    expenses: p.expenses,
-    savingsRate: p.income === 0 ? 0 : Math.max(-100, Math.min(100, Math.round(((p.income - p.expenses) / p.income) * 100))),
-  }));
-
-  const overall = cashFlow.totals.income === 0
-    ? 0
-    : Math.max(-100, Math.min(100, Math.round(((cashFlow.totals.income - cashFlow.totals.expenses) / cashFlow.totals.income) * 100)));
-
-  return { periods, overall };
-}
+}

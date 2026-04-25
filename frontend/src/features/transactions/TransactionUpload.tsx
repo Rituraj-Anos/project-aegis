@@ -19,8 +19,9 @@ export default function TransactionUpload() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
     },
-    onSuccess: () => {
-      toast.success('CSV uploaded! Transactions imported.');
+    onSuccess: (response) => {
+      const importedCount = response.data?.data?.importedCount ?? response.data?.importedCount ?? 0;
+      toast.success(`CSV uploaded! ${importedCount} transactions imported.`);
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['recent-transactions'] });
       qc.invalidateQueries({ queryKey: ['dashboard-stats'] });

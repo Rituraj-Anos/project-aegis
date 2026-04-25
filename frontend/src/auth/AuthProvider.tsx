@@ -34,17 +34,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUser = useCallback(async (): Promise<void> => {
     try {
-      const { data } = await apiClient.get<User>('/users/me');
-      setUser(data);
+      const { data } = await apiClient.get<{ success: boolean; data: User }>('/users/me');
+      setUser(data.data);
     } catch {
       // Access token invalid — try refresh
       try {
-        const { data: refreshData } = await refreshClient.post<{ accessToken: string }>(
+        const { data: refreshData } = await refreshClient.post<{ success: boolean; data: { accessToken: string } }>(
           '/auth/refresh'
         );
-        tokenStore.setToken(refreshData.accessToken);
-        const { data: userData } = await apiClient.get<User>('/users/me');
-        setUser(userData);
+        tokenStore.setToken(refreshData.data.accessToken);
+        const { data: userData } = await apiClient.get<{ success: boolean; data: User }>('/users/me');
+        setUser(userData.data);
       } catch {
         // Fully unauthenticated
         tokenStore.clearToken();
@@ -61,8 +61,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Try silent refresh from httpOnly cookie
         try {
-          const { data } = await refreshClient.post<{ accessToken: string }>('/auth/refresh');
-          tokenStore.setToken(data.accessToken);
+          const { data } = await refreshClient.post<{ success: boolean; data: { accessToken: string } }>('/auth/refresh');
+          tokenStore.setToken(data.data.accessToken);
           await fetchUser();
         } catch {
           setUser(null);

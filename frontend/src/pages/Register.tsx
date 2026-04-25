@@ -6,7 +6,8 @@ import { motion } from 'framer-motion';
 import { useNavigate, Link } from 'react-router-dom';
 import { User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { apiRegister } from '../mock/api';
+import apiClient from '../lib/api/client';
+import { useAuth } from '../auth/AuthProvider';
 
 const schema = z.object({
   name: z.string().min(2, 'At least 2 characters'),
@@ -29,15 +30,22 @@ const S_COLORS = ['', '#FF6B6B', '#FFB347', '#FFD16F', '#00FF87'];
 
 export default function Register() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [showPw, setShowPw] = useState(false);
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<Form>({ resolver: zodResolver(schema) });
   const pw = watch('password') ?? '';
   const strength = pwStrength(pw);
 
   const onSubmit = async (d: Form) => {
-    await apiRegister(d.name, d.email, d.password);
-    toast.success('Account created! Welcome to Aegis 🌱');
-    navigate('/dashboard');
+    try {
+      const res = await apiClient.post('/auth/register', { name: d.name, email: d.email, password: d.password });
+      login(res.data.data.accessToken, res.data.data.user);
+      toast.success('Account created! Welcome to Aegis 🌱');
+      navigate('/dashboard');
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message ?? 'Registration failed';
+      toast.error(msg);
+    }
   };
 
   return (

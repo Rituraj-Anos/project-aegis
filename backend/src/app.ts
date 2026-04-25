@@ -35,6 +35,18 @@ import { notificationRouter }    from './modules/notifications/notification.rout
 import { attachmentRouter }      from './modules/attachments/attachment.routes.js';
 import { userRouter }            from './modules/users/user.routes.js';
 
+export const alertRouter = express.Router();
+alertRouter.get('/', (_req, res) => res.json({ success: true, data: { alerts: [], total: 0 } }));
+alertRouter.patch('/:id/acknowledge', (_req, res) => res.json({ success: true, data: { message: 'Acknowledged' } }));
+
+export const shadowRouter = express.Router();
+shadowRouter.post('/calculate', (req, res) => {
+  const amount = req.body.amount || 0;
+  const projectedSIP = Math.round(amount * (Math.pow(1.01, 120) - 1) / 0.01 * 1.01);
+  const projectedFD = Math.round(amount * Math.pow(1.065, 10));
+  res.json({ success: true, data: { projectedSIP, projectedFD, projectedInflationAdj: projectedFD, insight: `₹${amount} = ₹${projectedSIP} in 10 years` } });
+});
+
 // ── Sentry (must be before Express app) ───────────────────
 if (env.SENTRY_DSN) {
   Sentry.init({
@@ -103,7 +115,7 @@ initPassport();
 app.use(passport.initialize());
 
 // ── 12. Health routes (no auth/rate-limit overhead) ───────
-app.use(healthRoutes);
+app.use('/api/v1', healthRoutes);
 
 // ── 13. Auth routes (strict limiter + brute force guard) ──
 app.use('/api/v1/auth', authLimiter, bruteForceGuard, authRouter);
@@ -119,6 +131,8 @@ app.use('/api/v1/admin',        adminRouter);
 app.use('/api/v1/notifications', notificationRouter);
 app.use('/api/v1/attachments',   attachmentRouter);
 app.use('/api/v1/users',         userRouter);
+app.use('/api/v1/alerts',        alertRouter);
+app.use('/api/v1/shadow',        shadowRouter);
 
 // ── 15. Static uploads (local dev only) ──────────────────
 if (env.STORAGE_PROVIDER === 'local') {

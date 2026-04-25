@@ -5,9 +5,17 @@ import { adjustBalance } from '../accounts/account.service.js';
 import { BadRequestError, NotFoundError } from '../../utils/appError.js';
 import type { CreateTransactionInput, UpdateTransactionInput, ListTransactionsQuery } from './transaction.schema.js';
 
+// Extended input type to accept Aegis-specific fields
+type ExtendedCreateInput = CreateTransactionInput & {
+  merchantName?: string;
+  source?: 'csv' | 'manual' | 'mock_api';
+  isIntercepted?: boolean;
+  timestamp?: string | Date;
+};
+
 export async function createTransaction(
   userId: string,
-  input: CreateTransactionInput,
+  input: ExtendedCreateInput,
 ): Promise<ITransaction> {
   // Verify account ownership
   const account = await AccountModel.findOne({
@@ -27,34 +35,27 @@ export async function createTransaction(
     if (!dest) throw new NotFoundError('Destination account not found');
   }
 
-  const session = await mongoose.startSession();
-  try {
-    session.startTransaction();
+  const [tx] = await TransactionModel.create([{
+    ...input,
+    userId: new Types.ObjectId(userId),
+    accountId: new Types.ObjectId(input.accountId),
+    merchantName: input.merchantName,
+    source: input.source ?? 'manual',
+    isIntercepted: input.isIntercepted ?? false,
+  }]);
 
-    const [tx] = await TransactionModel.create(
-      [{ ...input, userId: new Types.ObjectId(userId), accountId: new Types.ObjectId(input.accountId) }],
-      { session },
-    );
+  const { amount: txAmount, type, transferFee = 0, transferToAccountId } = input;
 
-    const { amount: txAmount, type, transferFee = 0, transferToAccountId } = input;
-
-    if (type === 'income') {
-      await adjustBalance(input.accountId, txAmount, session);
-    } else if (type === 'expense') {
-      await adjustBalance(input.accountId, -txAmount, session);
-    } else if (type === 'transfer' && transferToAccountId) {
-      await adjustBalance(input.accountId, -(txAmount + transferFee), session);
-      await adjustBalance(transferToAccountId, txAmount, session);
-    }
-
-    await session.commitTransaction();
-    return tx!;
-  } catch (err) {
-    await session.abortTransaction();
-    throw err;
-  } finally {
-    session.endSession();
+  if (type === 'income') {
+    await adjustBalance(input.accountId!, txAmount);
+  } else if (type === 'expense') {
+    await adjustBalance(input.accountId!, -txAmount);
+  } else if (type === 'transfer' && transferToAccountId) {
+    await adjustBalance(input.accountId!, -(txAmount + transferFee));
+    await adjustBalance(transferToAccountId, txAmount);
   }
+
+  return tx!;
 }
 
 export async function listTransactions(
@@ -66,13 +67,21 @@ export async function listTransactions(
     isDeleted: false,
   };
 
-  if (query.accountId)  filter['accountId'] = new Types.ObjectId(query.accountId);
-  if (query.type)       filter['type'] = query.type;
-  if (query.category)   filter['category'] = { $regex: new RegExp(query.category, 'i') };
+  if (query.accountId) filter['accountId'] = new Types.ObjectId(query.accountId);
+  if (query.type) filter['type'] = query.type;
+  if (query.category) filter['category'] = { $regex: new RegExp(query.category, 'i') };
+  if ((query as any).search) {
+    const s = (query as any).search;
+    filter['$or'] = [
+      { description: { $regex: s, $options: 'i' } },
+      { merchantName: { $regex: s, $options: 'i' } },
+      { category: { $regex: s, $options: 'i' } },
+    ];
+  }
   if (query.startDate || query.endDate) {
     const dateFilter: Record<string, Date> = {};
     if (query.startDate) dateFilter['$gte'] = query.startDate;
-    if (query.endDate)   dateFilter['$lte'] = query.endDate;
+    if (query.endDate) dateFilter['$lte'] = query.endDate;
     filter['date'] = dateFilter;
   }
   if (query.tags) {
@@ -81,8 +90,8 @@ export async function listTransactions(
   }
 
   const sortField = query.sortBy ?? 'date';
-  const sortDir   = query.sortOrder === 'asc' ? 1 : -1;
-  const skip      = (query.page - 1) * query.limit;
+  const sortDir = query.sortOrder === 'asc' ? 1 : -1;
+  const skip = (query.page - 1) * query.limit;
 
   const [total, data] = await Promise.all([
     TransactionModel.countDocuments(filter),
@@ -108,7 +117,7 @@ export async function getTransactionById(txId: string, userId: string): Promise<
   return tx;
 }
 
-const UPDATABLE_FIELDS = ['category','subcategory','description','date','tags','notes','attachments','isRecurring'] as const;
+const UPDATABLE_FIELDS = ['category', 'subcategory', 'description', 'date', 'tags', 'notes', 'attachments', 'isRecurring', 'merchantName', 'isIntercepted'] as const;
 
 export async function updateTransaction(
   txId: string,
@@ -122,7 +131,7 @@ export async function updateTransaction(
   const tx = await getTransactionById(txId, userId);
 
   for (const field of UPDATABLE_FIELDS) {
-    if (field in input && input[field] !== undefined) {
+    if (field in input && (input as any)[field] !== undefined) {
       (tx as any)[field] = (input as any)[field];
     }
   }
@@ -133,32 +142,20 @@ export async function updateTransaction(
 export async function deleteTransaction(txId: string, userId: string): Promise<void> {
   const tx = await getTransactionById(txId, userId);
 
-  const session = await mongoose.startSession();
-  try {
-    session.startTransaction();
+  tx.isDeleted = true;
+  tx.deletedAt = new Date();
+  await tx.save();
 
-    tx.isDeleted = true;
-    tx.deletedAt = new Date();
-    await tx.save({ session });
+  const { amount, type, transferFee = 0 } = tx;
+  const accountId = tx.accountId.toString();
+  const destId = tx.transferToAccountId?.toString();
 
-    const { amount, type, transferFee = 0 } = tx;
-    const accountId = tx.accountId.toString();
-    const destId    = tx.transferToAccountId?.toString();
-
-    if (type === 'income') {
-      await adjustBalance(accountId, -amount, session);
-    } else if (type === 'expense') {
-      await adjustBalance(accountId, amount, session);
-    } else if (type === 'transfer' && destId) {
-      await adjustBalance(accountId, amount + transferFee, session);
-      await adjustBalance(destId, -amount, session);
-    }
-
-    await session.commitTransaction();
-  } catch (err) {
-    await session.abortTransaction();
-    throw err;
-  } finally {
-    session.endSession();
+  if (type === 'income') {
+    await adjustBalance(accountId, -amount);
+  } else if (type === 'expense') {
+    await adjustBalance(accountId, amount);
+  } else if (type === 'transfer' && destId) {
+    await adjustBalance(accountId, amount + transferFee);
+    await adjustBalance(destId, -amount);
   }
 }

@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 
 export const corsOptions: CorsOptions = {
   origin: (origin, callback) => {
-    const allowed = env.ALLOWED_ORIGINS.split(',').map((o) => o.trim());
+    const allowed = env.ALLOWED_ORIGINS.split(',').map((o: string) => o.trim());
     if (!origin || allowed.includes(origin)) {
       callback(null, true);
     } else {

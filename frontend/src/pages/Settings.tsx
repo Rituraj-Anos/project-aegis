@@ -6,8 +6,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { User, Mail, Save, Trash2, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Layout from '../components/Layout';
-import { apiUpdateProfile, apiUpdateCoachState, apiDeleteAccount } from '../mock/api';
-import { mockUser, COACH_CONFIG } from '../mock/data';
+import { apiUpdateProfile, apiUpdateCoachState, apiDeleteAccount } from '../features/users/api';
+import { COACH_CONFIG } from '../mock/data';
+import { useAuth } from '../auth/AuthProvider';
 
 const profileSchema = z.object({
   name: z.string().min(2, 'At least 2 characters'),
@@ -49,29 +50,33 @@ function DeleteModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel:
 }
 
 export default function Settings() {
-  const [coachLevel, setCoachLevel] = useState<0 | 1 | 2>(mockUser.coachState);
+  const { user, refreshUser, logout } = useAuth();
+  const [coachLevel, setCoachLevel] = useState<0 | 1 | 2>(user?.coachState ?? 0);
   const [showDelete, setShowDelete] = useState(false);
 
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<ProfileForm>({
     resolver: zodResolver(profileSchema),
-    defaultValues: { name: mockUser.name, email: mockUser.email },
+    defaultValues: { name: user?.name ?? '', email: user?.email ?? '' },
   });
 
   const onSaveProfile = async (d: ProfileForm) => {
     await apiUpdateProfile(d);
+    await refreshUser();
     toast.success('Profile updated!');
   };
 
   const onCoachChange = async (level: 0 | 1 | 2) => {
     setCoachLevel(level);
     await apiUpdateCoachState(level);
+    await refreshUser();
     toast.success(`Coach mode set to ${COACH_CONFIG[level].label}`);
   };
 
   const onDeleteConfirm = async () => {
     setShowDelete(false);
     await apiDeleteAccount();
-    toast.success('Account deleted (mock)');
+    toast.success('Account deleted');
+    logout();
   };
 
   return (

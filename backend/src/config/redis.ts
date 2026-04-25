@@ -1,29 +1,22 @@
-import Redis from 'ioredis';
-import { env } from './env.js';
 import { logger } from '../utils/logger.js';
 
-const redis = new Redis(env.REDIS_URL, {
-  maxRetriesPerRequest: 3,
-  enableReadyCheck: true,
-  lazyConnect: true,
-});
-
-redis.on('connect', () => logger.info('Redis connected'));
-redis.on('error', (err) => logger.error('Redis error', { err }));
-redis.on('close', () => logger.warn('Redis connection closed'));
+const redis = {
+  get: async () => null,
+  set: async () => 'OK',
+  del: async () => 1,
+  incr: async () => 1,
+  expire: async () => 1,
+  multi: () => redis,
+  exec: async () => [],
+  quit: async () => 'OK',
+  on: () => {},
+  status: 'ready',
+} as any;
 
 export async function connectRedis(): Promise<void> {
-  try {
-    await redis.connect();
-    logger.info('Redis ready');
-  } catch (err) {
-    logger.error('Redis connection failed', { err });
-    throw err;
-  }
+  logger.info('Redis disabled/mocked');
 }
 
-export async function disconnectRedis(): Promise<void> {
-  await redis.quit();
-}
+export async function disconnectRedis(): Promise<void> {}
 
 export default redis;

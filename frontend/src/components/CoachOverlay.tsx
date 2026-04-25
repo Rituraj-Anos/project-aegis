@@ -1,10 +1,11 @@
 import { motion } from 'framer-motion';
 import { X, ArrowRight, Sprout, TrendingUp } from 'lucide-react';
-import type { MockAlert } from '../mock/data';
+import type { CoachAlert } from '../App';
 import { COACH_CONFIG, inr } from '../mock/data';
+import { apiAcknowledgeAlert } from '../features/alerts/api';
 
 interface Props {
-  alert: MockAlert;
+  alert: CoachAlert;
   coachState: 0 | 1 | 2;
   onClose: () => void;
 }
@@ -12,6 +13,17 @@ interface Props {
 export default function CoachOverlay({ alert, coachState, onClose }: Props) {
   const cfg = COACH_CONFIG[coachState];
   const isPulsing = coachState === 1;
+
+  const handleClose = async () => {
+    if (alert._id !== 'dev-test') {
+      try {
+        await apiAcknowledgeAlert(alert._id);
+      } catch (err) {
+        console.error('Failed to acknowledge alert', err);
+      }
+    }
+    onClose();
+  };
 
   return (
     <>
@@ -37,7 +49,7 @@ export default function CoachOverlay({ alert, coachState, onClose }: Props) {
         )}
 
         {/* Close */}
-        <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={onClose}
+        <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={handleClose}
           style={{ position: 'absolute', top: '1.25rem', left: '1.25rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx-3)', display: 'flex', padding: 4, borderRadius: 6 }}>
           <X size={18} />
         </motion.button>
@@ -57,9 +69,9 @@ export default function CoachOverlay({ alert, coachState, onClose }: Props) {
             {alert.tone} · transaction intercepted
           </p>
           <p style={{ fontFamily: 'var(--font-head)', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.03em', color: coachState === 2 ? 'var(--danger)' : 'var(--tx-1)' }}>
-            {inr(4200)}
+            {inr(alert.amount)}
           </p>
-          <p style={{ fontSize: '0.8125rem', color: 'var(--tx-3)', marginTop: '0.25rem' }}>Zomato · Food</p>
+          <p style={{ fontSize: '0.8125rem', color: 'var(--tx-3)', marginTop: '0.25rem' }}>{alert.description}</p>
         </motion.div>
 
         {/* Projections row */}
@@ -88,12 +100,12 @@ export default function CoachOverlay({ alert, coachState, onClose }: Props) {
         {/* CTA buttons */}
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <motion.button initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.32 }}
-            whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={onClose}
+            whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleClose}
             className="btn-ghost" style={{ flex: 1 }}>
             <ArrowRight size={15} /> Proceed anyway
           </motion.button>
           <motion.button initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
-            whileHover={{ scale: 1.03, boxShadow: '0 0 28px rgba(0,255,135,0.4)' }} whileTap={{ scale: 0.97 }} onClick={onClose}
+            whileHover={{ scale: 1.03, boxShadow: '0 0 28px rgba(0,255,135,0.4)' }} whileTap={{ scale: 0.97 }} onClick={handleClose}
             className="btn-primary" style={{ flex: 1 }}>
             <Sprout size={15} /> Reconsider 🌱
           </motion.button>
