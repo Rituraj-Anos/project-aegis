@@ -36,15 +36,15 @@ export async function createTransaction(
       { session },
     );
 
-    const { amount, type, transferFee = 0, transferToAccountId } = input;
+    const { amount: txAmount, type, transferFee = 0, transferToAccountId } = input;
 
     if (type === 'income') {
-      await adjustBalance(input.accountId, amount, session);
+      await adjustBalance(input.accountId, txAmount, session);
     } else if (type === 'expense') {
-      await adjustBalance(input.accountId, -amount, session);
+      await adjustBalance(input.accountId, -txAmount, session);
     } else if (type === 'transfer' && transferToAccountId) {
-      await adjustBalance(input.accountId, -(amount + transferFee), session);
-      await adjustBalance(transferToAccountId, amount, session);
+      await adjustBalance(input.accountId, -(txAmount + transferFee), session);
+      await adjustBalance(transferToAccountId, txAmount, session);
     }
 
     await session.commitTransaction();
