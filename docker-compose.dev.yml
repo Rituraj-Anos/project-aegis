@@ -1,0 +1,9 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      target: builder
+    command: npm run dev
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/uploads:/app/uploads
